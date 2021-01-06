@@ -7,6 +7,7 @@ intents = discord.Intents.default()
 
 DEFAULT_EMBED_COLOR = 0xFFA500
 ERROR_EMBED_COLOR = 0xFF6347
+BUG_EMBED_COLOR = 0x5058a8
 
 with open("prefixes.json") as f:
     prefixes = json.load(f)

@@ -21,6 +21,7 @@ MAX_BOWL_SIZE = 999
 CONFIRM_TIME_OUT = 10.0
 BG_REFRESH_TIME = 60.0
 SESSION_TIMEOUT = datetime.timedelta(days=0, hours=1, seconds=0)
+BUG_REPORT_CHANNEL = 796498229872820314
 
 EMOJI_Y = "\N{THUMBS UP SIGN}"
 EMOJI_N = "\N{THUMBS DOWN SIGN}"
@@ -150,7 +151,7 @@ async def clean_inactive_sessions():
 
 @clean_inactive_sessions.before_loop
 async def wait_for_ready():
-    print('BG tasks waiting...')
+    print('Background tasks waiting...')
     await FishbowlBackend.bot.wait_until_ready()
 
 
@@ -295,6 +296,7 @@ async def leave(ctx, *args):
         sessions[session_id]['creator'] = new_creator.id
         creator_update = "\nCreator of Session #%s is now %s!" % (session_id, new_creator.mention)
 
+    sessions[session_id]['total_scraps'] -= len(sessions[session_id]['players'][user_id])
     del users[user_id]
     del sessions[session_id]['players'][user_id]
 
@@ -322,7 +324,14 @@ async def end(ctx, *args):
     if session_id not in sessions:
         return await FishbowlBackend.send_message(ctx, "Oops, internal error!")
 
+    notify_players = ctx.channel.type is discord.ChannelType.private and \
+                     sessions[session_id]['home_channel'].type is discord.ChannelType.private
+
     for player_id in sessions[session_id]['players']:
+        if notify_players and player_id != sessions[session_id]['creator']:
+            player_user = await FishbowlBackend.find_user(player_id)
+            player_dm = await player_user.create_dm()
+            await FishbowlBackend.send_message(player_dm, "%s ended Session #%s!" % (ctx.author.mention, session_id))
         del users[player_id]
 
     del sessions[session_id]
@@ -471,14 +480,12 @@ async def draw_master(ctx, args, from_discard=False):
 @check_user_in_session()
 async def draw(ctx, args: commands.Greedy[clean_scrap]=["1"]):
     return await draw_master(ctx, args, from_discard=False)
-    return
 
 
 @commands.command(name="drawfromdiscard", aliases=["drawdiscard", "discarddraw"])
 @check_user_in_session()
 async def draw_from_discard(ctx, args: commands.Greedy[clean_scrap]=["1"]):
     return await draw_master(ctx, args, from_discard=True)
-    return
 
 
 @draw.error
@@ -1131,6 +1138,26 @@ async def help_bot(ctx, keyword: clean_arg = ""):
         return await FishbowlBackend.send_message(ctx, "**%s**:\n" % help_df.loc[keyword]["CommandExample"] + help_df.loc[keyword]["DetailedHelp"])
     else:
         return await FishbowlBackend.send_error(ctx, "Don't recognize that help query! Try `help commands` for a list of all commands, or ask me for a specific command! (i.e. `help start`)")
+
+
+@help_bot.error
+async def help_error(ctx, error):
+    return await general_errors(ctx, error)
+
+
+@commands.command(name="bugreport")
+async def bug_report(ctx, *, arg: str):
+    bugreport_ch = FishbowlBackend.bot.get_channel(BUG_REPORT_CHANNEL)
+    await FishbowlBackend.send_embed(bugreport_ch,
+                                     description=arg,
+                                     footer="Submitted by %s" % str(ctx.author),
+                                     color=FishbowlBackend.BUG_EMBED_COLOR)
+    return await FishbowlBackend.send_embed(ctx, "Bug report sent! Thank you!")
+
+
+@bug_report.error
+async def bugreport_error(ctx, error):
+    return await general_errors(ctx, error)
 
 
 def setup():

@@ -23,3 +23,4 @@ recall	recall	recall_hands	Return all hands to the bowl (creator only)	Return al
 shuffle	shuffle	shuffle	Shuffle the discard pile into the bowl (creator only)	Shuffle the discard pile into the bowl (creator only).
 reset	reset	reset_session	Clear all scraps (creator only)	Clear all scraps from the bowl, discard pile, and all hands (creator only).
 help	help	help_bot	List all commands or get help with specific ones	List all commands with `help`, `help list`.\nYou can also get help with specific commands (i.e. `help start`).
+bugreport	bugreport `description`	bug_report	Submit a bug report to the dev	Submit a bug report to the dev. The report automatically includes your username.
