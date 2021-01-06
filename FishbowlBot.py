@@ -840,7 +840,7 @@ async def confirm_req(confirm_ctx, target_user, req_user, req_text, notify_users
 async def pass_take(ctx, dest, scraps, pass_flag=True):
     user_id = ctx.author.id
     if not scraps:
-        return await FishbowlBackend.send_error(ctx, "Need to give me the scrap you want to pass!")
+        return await FishbowlBackend.send_error(ctx, "Need to give me the scrap you want to take or pass!")
     session_id = users[user_id]
     session_update_time(session_id)
 
@@ -867,7 +867,7 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
         keyword2 = ("take", "from")
 
     if target_user.id == ctx.author.id:
-        return await FishbowlBackend.send_error(ctx, "Can't %s to yourself!" % keyword2[0])
+        return await FishbowlBackend.send_error(ctx, "Can't %s %s yourself!" % (keyword2[0], keyword2[1]))
 
     source_hand = sessions[session_id]['players'][source_user.id].copy()
     dest_hand = sessions[session_id]['players'][dest_user.id].copy()
@@ -906,31 +906,14 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
 
     if success_scraps:
         if ctx.message.channel.type is discord.ChannelType.private:
-            req_confirmed = await confirm_req(target_user,
-                                              target_user,
-                                              ctx.author,
-                                              "%s is trying to %s %d scraps %s you! Accept?" % (ctx.author.mention,
-                                                                                                keyword2[0],
-                                                                                                len(scraps),
-                                                                                                keyword2[1]),
-                                              notify_users=True)
-            if not req_confirmed:
-                return
-
+            confirm_ctx = target_user
+            confirm_msg = "%s is trying to %s %d scrap(s) %s you" % (ctx.author.mention, keyword2[0], len(scraps),
+                                                                   keyword2[1])
             descript = ""
         else:
-            req_confirmed = await confirm_req(ctx,
-                                              target_user,
-                                              ctx.author,
-                                              "%s is trying to %s %d scraps %s %s! Accept?" % (ctx.author.mention,
-                                                                                               keyword2[0],
-                                                                                               len(scraps),
-                                                                                               keyword2[1],
-                                                                                               target_user.mention),
-                                              notify_users=False)
-            if not req_confirmed:
-                return
-
+            confirm_ctx = ctx
+            confirm_msg = "%s is trying to %s %d scrap(s) %s %s" % (ctx.author.mention, keyword2[0], len(scraps),
+                                                                  keyword2[1], target_user.mention)
             if word_scrap:
                 descript = "%s %s %d scrap(s) %s %s:\n%s" % (source_user.mention,  # User1
                                                                keyword1[0],  # passed/took
@@ -944,6 +927,18 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
                                                            len(success_scraps),
                                                            keyword1[1],  # to/from
                                                            dest_user.mention)  # User2)
+        if word_scrap:
+            confirm_msg += ":\n`%s`\n" % "`, `".join(success_scraps)
+        else:
+            confirm_msg += "! "
+
+        req_confirmed = await confirm_req(confirm_ctx,
+                                          target_user,
+                                          ctx.author,
+                                          confirm_msg + "Accept?",
+                                          notify_users=(ctx.message.channel.type is discord.ChannelType.private))
+        if not req_confirmed:
+            return
 
         # DM people if DMs OR if people are passing random scraps in public
         if ctx.message.channel.type is discord.ChannelType.private or not word_scrap:
@@ -951,7 +946,7 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
                 dest_msg = "%s passed you %d scrap(s):\n%s" % (source_user.mention, len(success_scraps), word_list)
                 source_msg = "You passed %s %d scrap(s):\n%s" % (dest_user.mention, len(success_scraps), word_list)
             else:
-                dest_msg = "You took %d scrap(s) from %s:\n%s" % (source_user.mention, len(success_scraps), word_list)
+                dest_msg = "You took %d scrap(s) from %s:\n%s" % (len(success_scraps), source_user.mention, word_list)
                 source_msg = "%s took %d scrap(s) from you:\n%s" % (dest_user.mention, len(success_scraps), word_list)
 
             await FishbowlBackend.send_embed(dest_user, description=dest_msg, footer=footer_msg)
@@ -995,8 +990,8 @@ async def take_scrap(ctx, dest: str, scraps: commands.Greedy[clean_scrap]):
     return await pass_take(ctx, dest, scraps, pass_flag=False)
 
 
-@pass_scrap.error
-async def pass_err(ctx, error):
+@take_scrap.error
+async def take_err(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
         return await FishbowlBackend.send_error(ctx, "Missing an argument!\n"+
                                                 "Give me both the player you're taking from and the scraps you're taking!")
