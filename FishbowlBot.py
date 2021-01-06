@@ -1128,9 +1128,9 @@ async def recall_error(ctx, error):
 @commands.command(name="help")
 async def help_bot(ctx, keyword: clean_arg = ""):
     if not keyword:
-        return await FishbowlBackend.send_message(ctx, "I'm **FishbowlBot**, a Discord bot for games where you put a bunch of scraps in a bowl/hat/etc. then take them out!\n\n" +
-                                                  "Start a Fishbowl session with `start`, then have other players join in! Everyone can add scraps with `add`, then draw from the bowl using `draw`. You can also `edit` scraps, `pass` them to other players, and more!\n\n" +
-                                                  "You can also DM me commands! Good if you want to add words to the bowl without revealing them.\n" +
+        return await FishbowlBackend.send_message(ctx, "I'm **FishbowlBot**, a Discord bot for games where you put a bunch of scraps in a bowl, hat, or what have you, then take them out!\n\n" +
+                                                  "Start a Fishbowl session with `start`, then have other players join in! Everyone can add scraps with `add` and draw from the bowl using `draw`. You can also `edit` scraps, `pass` them to other players, and more!\n\n" +
+                                                  "You can also DM me commands! Good if you want to add words to the bowl without revealing them.\n\n" +
                                                   "For a list of all commands, do `help commands`. You can also ask me for detailed help with a specific command. (i.e. `help start`)")
     if keyword in ["all", "commands", "command", "list"]:
         return await FishbowlBackend.send_embed(ctx, "", fields=bot_command_dict)
