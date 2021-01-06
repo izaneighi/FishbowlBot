@@ -1,0 +1,25 @@
+Command	CommandExample	Function	Help	DetailedHelp
+start	start	start	Start a new session	Start a Fishbowl session. You cannot be in multiple sessions at once.
+join	join `ID`	end	Join Session #`ID`	Join Session #`ID`. You cannot be in multiple sessions at once.
+end	end	join	End your session (creator only)	End your session, kicking all players (creator only).
+leave	leave	leave	Leave the session you're in	Leave the session you're in.\nIf you're the creator, you can optionally tell it which player to promote as the new creator. Otherwise, it promotes a random player.
+session	session	check_session	Check session info	Check the ID, players, and creator of the session you're in.
+check	check	check_bowl	Check the number of scraps in play	Check the number of scraps in the bowl, discard pile, and players' hands.
+add	add `scrap`	add	Add `scrap` to the bowl 	Add `scrap` to the bowl. Allows multiple at once.\nThere is a maximum of 999 scraps allowed in play, including the discard pile and hands.
+draw	draw `#`/`scrap`	draw	Draw `#` scraps from the bowl, or specifically `scrap`	Draw `#` scraps from the bowl, or specifically draw `scrap` from the bowl if present. Allows multiple scraps at once.
+drawdiscard	drawdiscard `#`/`scrap`	draw_from_discard	Draws from discard pile instead	Draw `#` scraps from the discard pile, or specifically draw `scrap` from the bowl if present. Allows multiple scraps at once.
+peek	peek `#`	peek	Peek at `#` scraps from the bowl without removing them	Peek at `#` scraps from the bowl without removing them.
+hand	hand	hand	Check your hand	Check your hand.\nOptionally, do `hand public` to show your hand to the text channel.
+edit	edit `old` `new`	edit	Edit a scrap in your hand	Edit a scrap in your hand, changing it from `old` to `new`.
+discard	discard `scrap`	discard	Discard `scrap` from your hand	Discard `scrap` from your hand. Allows multiple at once.\nYou can also discard your entire hand with `discard hand`.
+destroy	destroy `scrap`	destroy	Destroy `scrap` in your hand	Destroy `scrap` in your hand, removing it from the session. Allows multiple at once.\nYou can also destroy your entire hand with `destroy hand`.
+return	return `scrap`	return_scrap	Return `scrap` in your hand to the bowl	Return `scrap` in your hand to the bowl. Allows multiple at once.\nYou can also return your entire hand to the bowl with `return hand`.
+see	see bowl/discard	see	List all scraps in the bowl or discard pile	List all scraps in either the bowl or discard pile.
+show	show `player`	show_hand	Show your hand to `player`	Show your hand to `player`. You can also do `show public` to show your hand to the text channel.
+pass	pass `player` `scrap`/`#`	pass_scrap	Pass `player` `scrap` from your hand, or `#` random ones	Pass `player` `scrap` from your hand. Allows multiple scraps at once.\nIf a number is provided, chooses `#` random scraps instead.
+take	take `player` `scrap`/`#`	take_scrap	Take `scrap` from `player`'s hand, or `#` random ones	Take `scrap` from `player`'s hand. Allows multiple scraps at once.\nIf a number is provided, chooses `#` random scraps instead.
+addtohand	addtohand `scrap`	add_to_hand	Add `scrap` directly to your hand	Add `scrap` directly to your hand.\nThere is a maximum of 999 scraps allowed in play, including the discard pile and hands.
+recall	recall	recall_hands	Return all hands to the bowl (creator only)	Return all hands to the bowl (creator only).
+shuffle	shuffle	shuffle	Shuffle the discard pile into the bowl (creator only)	Shuffle the discard pile into the bowl (creator only).
+reset	reset	reset_session	Clear all scraps (creator only)	Clear all scraps from the bowl, discard pile, and all hands (creator only).
+help	help	help_bot	List all commands or get help with specific ones	List all commands with `help`, `help list`.\nYou can also get help with specific commands (i.e. `help start`).
