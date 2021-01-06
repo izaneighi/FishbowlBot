@@ -12,11 +12,12 @@ import traceback
 import asyncio
 import pandas as pd
 
+load_dotenv()
+token = os.getenv('DISCORD_TOKEN')
+
 MAX_USER_SESSIONS = 1
 MAX_TOTAL_SESSIONS = 100
 MAX_BOWL_SIZE = 999
-load_dotenv()
-token = os.getenv('DISCORD_TOKEN')
 CONFIRM_TIME_OUT = 10.0
 
 EMOJI_Y = "\N{THUMBS UP SIGN}"
