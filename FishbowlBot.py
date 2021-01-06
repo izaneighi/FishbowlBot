@@ -30,6 +30,7 @@ bot_command_dict = {cmd: cmd_help for cmd, cmd_help in zip(help_df["CommandExamp
 sessions = {}
 users = {}
 
+
 class CreatorOnly(commands.CheckFailure):
     pass
 
@@ -61,7 +62,7 @@ async def general_errors(ctx, error):
     if isinstance(error, UserNotInSession):
         return await FishbowlBackend.send_error(ctx, "You are currently not in a session!")
     if isinstance(error, commands.ExpectedClosingQuoteError) or isinstance(error, commands.InvalidEndOfQuotedStringError):
-        return await FishbowlBackend.send_error(ctx, error)
+        return await FishbowlBackend.send_error(ctx, str(error))
     await FishbowlBackend.send_error(ctx, "Something unexpected broke!")
     traceback.print_exc()
 
@@ -300,7 +301,6 @@ async def add_master(ctx, scraps, to_hand=False):
     user_id = ctx.author.id
     session_id = users[user_id]
     session_update_time(session_id)
-
 
     if (sessions[session_id]['total_scraps'] + len(scraps)) > MAX_BOWL_SIZE:
         await FishbowlBackend.send_embed(ctx,

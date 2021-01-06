@@ -35,7 +35,7 @@ async def on_ready():
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return await send_error(ctx, str(error)+"!")
-    raise error
+    pass
 
 
 async def is_already_waiting(sender, receiver):
