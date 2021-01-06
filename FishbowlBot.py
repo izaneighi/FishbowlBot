@@ -16,6 +16,7 @@ load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
 
 MAX_USER_SESSIONS = 1
+MAX_USERS_PER_SESSION = 99
 MAX_TOTAL_SESSIONS = 100
 MAX_BOWL_SIZE = 999
 CONFIRM_TIME_OUT = 10.0
@@ -165,14 +166,13 @@ async def test(ctx, *args):
 async def start(ctx, *args):
     num_sessions = len(sessions)
     if len(sessions) > MAX_TOTAL_SESSIONS:
-        return await FishbowlBackend.send_message(ctx, "Bot is handling too many sessions right now! Please try again later!" % MAX_TOTAL_SESSIONS)
+        return await FishbowlBackend.send_error(ctx, "Bot is handling too many sessions right now! Please try again later!" % MAX_TOTAL_SESSIONS)
 
     creator_id = ctx.author.id
     session_id = str(num_sessions)
 
     if creator_id in users:
-        return await FishbowlBackend.send_message(ctx,
-                                                  "Already in a session! (Session #`%s`)" % users[creator_id])
+        return await FishbowlBackend.send_error(ctx, "Already in a session! (Session #`%s`)" % users[creator_id])
     users[creator_id] = session_id
 
     sessions[session_id] = {'bowl': [],
@@ -195,11 +195,14 @@ async def join(ctx, *args):
     session_id = clean_session_id(args[0])
     user_id = ctx.author.id
     if user_id in users:
-        return await FishbowlBackend.send_message(ctx,
-                                                  "Already in a session! (Session ID `%s`)" % users[user_id])
+        return await FishbowlBackend.send_error(ctx, "Already in a session! (Session ID `%s`)" % users[user_id])
     if session_id not in sessions:
-        return await FishbowlBackend.send_message(ctx, "Can't find Session #%s! Did you type it in correctly?" % session_id)
+        return await FishbowlBackend.send_error(ctx, "Can't find Session #%s! Did you type it in correctly?" % session_id)
 
+    if len(sessions[session_id]['players']) >= MAX_USERS_PER_SESSION:
+        return await FishbowlBackend.send_error(ctx,
+                                                "Session #%s is at its maximum of %d players! Please try again later!" %
+                                                (session_id, MAX_USERS_PER_SESSION))
     sessions[session_id]['players'][user_id] = []
     users[user_id] = session_id
     session_update_time(session_id)
@@ -262,8 +265,7 @@ async def leave(ctx, *args):
     user_id = ctx.author.id
     session_id = users[user_id]
     if session_id not in sessions:
-        return await FishbowlBackend.send_message(ctx,
-                                                  "Oops! Internal error!" % session_id)
+        return await FishbowlBackend.send_error(ctx, "Oops! Internal error!" % session_id)
 
     session_update_time(session_id)
     if len(args) > 0:
@@ -322,7 +324,7 @@ async def end(ctx, *args):
     session_id = users[user_id]
 
     if session_id not in sessions:
-        return await FishbowlBackend.send_message(ctx, "Oops, internal error!")
+        return await FishbowlBackend.send_error(ctx, "Oops, internal error!")
 
     notify_players = ctx.channel.type is discord.ChannelType.private and \
                      sessions[session_id]['home_channel'].type is discord.ChannelType.private
