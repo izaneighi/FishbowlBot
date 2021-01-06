@@ -1159,7 +1159,10 @@ async def bug_report(ctx, *, arg: str):
 
 @bug_report.error
 async def bugreport_error(ctx, error):
-    return await general_errors(ctx, error)
+    if isinstance(error, commands.MissingRequiredArgument):
+        return await FishbowlBackend.send_error(ctx, 'Please provide a description of the bug!')
+    else:
+        return await general_errors(ctx, error)
 
 
 def setup():
