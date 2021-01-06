@@ -703,7 +703,6 @@ async def see_error(ctx, error):
 @check_user_in_session()
 async def show_hand(ctx, dest: str):
     user_id = ctx.author.id
-
     session_id = users[user_id]
     session_update_time(session_id)
 
@@ -720,17 +719,35 @@ async def show_hand(ctx, dest: str):
                 return await FishbowlBackend.send_error(ctx,
                                                         "Can't find the player! Trying mentioning them or their full username!")
 
+        if target_user.id == user_id:
+            return await FishbowlBackend.send_error(ctx, "Can't show your own hand to yourself! Try `hand` instead!")
+
         if target_user.id not in sessions[session_id]['players']:
             return await FishbowlBackend.send_error(ctx,
                                                     "%s isn't in the session!" % target_user.name)
         target_ctx = target_user
+
         if ctx.message.channel.type is discord.ChannelType.private:
+            req_confirmed = await confirm_req(target_user,
+                                              target_user,
+                                              ctx.author,
+                                              "%s is trying to show you their hand! Accept?" % ctx.author.mention,
+                                              notify_users=True)
+            if not req_confirmed:
+                return
+
             await FishbowlBackend.send_embed(ctx,
                                              description="Showing %s your hand..." % target_user.name,
                                              footer="Session #%s" % session_id
                                              )
-            await FishbowlBackend.send_message(target_user, "%s is showing you their hand!" % ctx.author.name)
         else:
+            req_confirmed = await confirm_req(ctx,
+                                              target_user,
+                                              ctx.author,
+                                              "%s is trying to show %s their hand! Accept?" % (ctx.author.name, target_user.name),
+                                              notify_users=False)
+            if not req_confirmed:
+                return
             await FishbowlBackend.send_embed(ctx,
                                              description="%s is showing %s their hand..." % (ctx.author.name, target_user.name),
                                              footer="Session #%s" % session_id
@@ -777,15 +794,14 @@ async def confirm_req(confirm_ctx, target_user, req_user, req_text, notify_users
             if notify_users:
                 await FishbowlBackend.send_message(confirm_ctx, "Request accepted!")
                 await FishbowlBackend.send_message(req_user, "%s accepted your request!" % target_user)
-            return True
         if reaction.emoji == EMOJI_N:
             if notify_users:
                 await FishbowlBackend.send_message(confirm_ctx, "Request denied!")
                 await FishbowlBackend.send_message(req_user, "%s denied your request!" % target_user)
-            return False
-
         await confirm_msg.remove_reaction(EMOJI_Y, FishbowlBackend.bot.user)
         await confirm_msg.remove_reaction(EMOJI_N, FishbowlBackend.bot.user)
+        return reaction.emoji == EMOJI_Y
+
     except asyncio.TimeoutError:
         await FishbowlBackend.send_message(confirm_ctx, "Request timed out!")
         if notify_users:
