@@ -2,7 +2,7 @@
 import os
 import json
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 import FishbowlBackend
 import datetime
@@ -19,6 +19,8 @@ MAX_USER_SESSIONS = 1
 MAX_TOTAL_SESSIONS = 100
 MAX_BOWL_SIZE = 999
 CONFIRM_TIME_OUT = 10.0
+BG_REFRESH_TIME = 60.0
+SESSION_TIMEOUT = datetime.timedelta(days=0, hours=1, seconds=0)
 
 EMOJI_Y = "\N{THUMBS UP SIGN}"
 EMOJI_N = "\N{THUMBS DOWN SIGN}"
@@ -127,6 +129,31 @@ def reaction_check(message=None, emoji=None, author=None, ignore_bot=True):
     return check
 
 
+@tasks.loop(seconds=BG_REFRESH_TIME)
+async def clean_inactive_sessions():
+    check_time = datetime.datetime.now()
+    inactive_sess = [key for key in sessions if
+                     (check_time - datetime.datetime.strptime(sessions[key]["last_modified"], '%Y-%m-%d %H:%M:%S')) > SESSION_TIMEOUT]
+    for key in inactive_sess:
+        print('Clearing Session #%s for inactivity...' % key)
+        user_list = sessions[key]['players'].keys()
+        for user_id in user_list:
+            msg = "Session #%s has been closed due to inactivity!" % key
+            if user_id == sessions[key]['creator']:
+                msg += "\nNext time, make sure to close the session once you're done with `end`!"
+            dm_ctx = await FishbowlBackend.find_user(user_id)
+            await FishbowlBackend.send_message(dm_ctx, msg)
+            del users[user_id]
+        del sessions[key]
+    return
+
+
+@clean_inactive_sessions.before_loop
+async def wait_for_ready():
+    print('BG tasks waiting...')
+    await FishbowlBackend.bot.wait_until_ready()
+
+
 @commands.command()
 async def test(ctx, *args):
     await FishbowlBackend.send_message(ctx, '{} arguments: {}'.format(len(args), ', '.join(args)))
@@ -164,7 +191,6 @@ async def join(ctx, *args):
     if len(args) == 0:
         return await FishbowlBackend.send_error(ctx, "Missing the ID of the session to join!")
     session_id = clean_session_id(args[0])
-
     user_id = ctx.author.id
     if user_id in users:
         return await FishbowlBackend.send_message(ctx,
@@ -187,8 +213,8 @@ async def check_session(ctx, *args):
     creator_user = await FishbowlBackend.find_user(sessions[session_id]['creator'])
     if creator_user is None:
         return await FishbowlBackend.send_error(ctx, "Oops, internal error!")
-
-    valid_session_players = [user for user in session_players if not None]
+    session_update_time(session_id)
+    valid_session_players = [user for user in session_players if user is not None]
     not_found_users = len(session_players) - len(valid_session_players)
     if not_found_users > 0:
         footer_msg = "Warning: Was not able to find %d users" % not_found_users
@@ -206,8 +232,8 @@ async def check_session(ctx, *args):
 async def check_bowl(ctx, *args):
     user_id = ctx.author.id
     session_id = users[user_id]
+    session_update_time(session_id)
     session_players = sessions[session_id]['players']
-
     session_dict = {"Bowl Scraps": len(sessions[session_id]['bowl']),
                     "Discard Scraps": "%d" % len(sessions[session_id]['discard']),
                     "Player Hands": "\n".join(["%s: %d" % (await FishbowlBackend.find_user(player), len(session_players[player])) for player in session_players]),
@@ -233,6 +259,7 @@ async def leave(ctx, *args):
         return await FishbowlBackend.send_message(ctx,
                                                   "Oops! Internal error!" % session_id)
 
+    session_update_time(session_id)
     if len(args) > 0:
         try:
             new_creator = await commands.MemberConverter().convert(ctx, args[0])
@@ -262,7 +289,6 @@ async def leave(ctx, *args):
 
     del users[user_id]
     del sessions[session_id]['players'][user_id]
-    session_update_time(session_id)
     return await FishbowlBackend.send_message(ctx,
                                               "%s successfully left Session #%s!" % (ctx.author.mention, session_id)
                                               + creator_update)
@@ -451,6 +477,7 @@ async def draw_error(ctx, error):
 async def peek(ctx, num_draw: int):
     user_id = ctx.author.id
     session_id = users[user_id]
+    session_update_time(session_id)
     if num_draw == 0:
         return await FishbowlBackend.send_embed(ctx,
                                                 description="%s peeked at... 0 scraps! Huh?" % ctx.author.mention,
@@ -474,7 +501,6 @@ async def peek(ctx, num_draw: int):
                                      description="You peek at %d scrap(s) in the bowl:\n`%s`" % (num_draw, "`, `".join(drawn_scraps)),
                                      footer="Bowl: %d (Session #%s)" % (len(sessions[session_id]['bowl']), session_id),
                                      color=FishbowlBackend.DEFAULT_EMBED_COLOR)
-    session_update_time(session_id)
     return
 
 
@@ -502,6 +528,7 @@ async def hand(ctx, show_keyword: typing.Optional[clean_scrap] = ''):
             return await FishbowlBackend.send_error(ctx, "Sorry, don't know what `%s` means!" % show_keyword)
 
     session_id = users[user_id]
+    session_update_time(session_id)
     user_hand = sessions[session_id]['players'][user_id]
     if ctx.message.channel.type is not discord.ChannelType.private and not public_show:
         await FishbowlBackend.send_embed(ctx,
@@ -519,8 +546,6 @@ async def hand(ctx, show_keyword: typing.Optional[clean_scrap] = ''):
                                      title="%s's Hand:" % ctx.author.name,
                                      description=hand_list,
                                      footer="Hand: %d (Session #%s)" % (len(user_hand), session_id))
-
-    session_update_time(session_id)
     return
 
 
@@ -848,6 +873,7 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
     dest_hand = sessions[session_id]['players'][dest_user.id].copy()
     success_scraps = []
     fail_scraps = []
+    word_scrap = True
 
     for scrap in scraps:
         if scrap in source_hand:
@@ -870,20 +896,15 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
             [source_hand.remove(scrap) for scrap in success_scraps]
             dest_hand += success_scraps
             fail_scraps = []
+            word_scrap = False
         except ValueError:
             pass
 
     footer_msg = "%s's Hand: %d, %s's Hand: %d (Session #%s)" % (source_user.name, len(source_hand),
                                                                  dest_user.name, len(dest_hand), session_id)
+    word_list = "`%s`" % "`, `".join(success_scraps)
 
     if success_scraps:
-        descript = "%s %s %d scrap(s) %s %s:\n`%s`" % (source_user.mention, # User1
-                                                       keyword1[0], # passed/took
-                                                       len(success_scraps),
-                                                       keyword1[1], # to/from
-                                                       dest_user.mention,  # User2
-                                                       "`, `".join(success_scraps))
-
         if ctx.message.channel.type is discord.ChannelType.private:
             req_confirmed = await confirm_req(target_user,
                                               target_user,
@@ -895,30 +916,47 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
                                               notify_users=True)
             if not req_confirmed:
                 return
-            if pass_flag:
-                await FishbowlBackend.send_embed(dest_user,
-                                                 description="%s passed you %d scrap(s)!\n`%s`" % (source_user.mention,
-                                                                                                   len(success_scraps),
-                                                                                                   "`, `".join(success_scraps)),
-                                                 footer=footer_msg)
-            else:
-                await FishbowlBackend.send_embed(source_user,
-                                                 description="%s took %d scrap(s) from you:\n`%s`" % (dest_user.mention,
-                                                                                                      len(success_scraps),
-                                                                                                      "`, `".join(success_scraps)),
-                                                 footer=footer_msg)
+
+            descript = ""
         else:
             req_confirmed = await confirm_req(ctx,
                                               target_user,
                                               ctx.author,
                                               "%s is trying to %s %d scraps %s %s! Accept?" % (ctx.author.mention,
-                                                                                                keyword2[0],
-                                                                                                len(scraps),
-                                                                                                target_user.mention,
-                                                                                                keyword2[1]),
+                                                                                               keyword2[0],
+                                                                                               len(scraps),
+                                                                                               keyword2[1],
+                                                                                               target_user.mention),
                                               notify_users=False)
             if not req_confirmed:
                 return
+
+            if word_scrap:
+                descript = "%s %s %d scrap(s) %s %s:\n%s" % (source_user.mention,  # User1
+                                                               keyword1[0],  # passed/took
+                                                               len(success_scraps),
+                                                               keyword1[1],  # to/from
+                                                               dest_user.mention,  # User2
+                                                               word_list)
+            else:
+                descript = "%s %s %d scrap(s) %s %s..." % (source_user.mention,  # User1
+                                                           keyword1[0],  # passed/took
+                                                           len(success_scraps),
+                                                           keyword1[1],  # to/from
+                                                           dest_user.mention)  # User2)
+
+        # DM people if DMs OR if people are passing random scraps in public
+        if ctx.message.channel.type is discord.ChannelType.private or not word_scrap:
+            if pass_flag:
+                dest_msg = "%s passed you %d scrap(s):\n%s" % (source_user.mention, len(success_scraps), word_list)
+                source_msg = "You passed %s %d scrap(s):\n%s" % (dest_user.mention, len(success_scraps), word_list)
+            else:
+                dest_msg = "You took %d scrap(s) from %s:\n%s" % (source_user.mention, len(success_scraps), word_list)
+                source_msg = "%s took %d scrap(s) from you:\n%s" % (dest_user.mention, len(success_scraps), word_list)
+
+            await FishbowlBackend.send_embed(dest_user, description=dest_msg, footer=footer_msg)
+            await FishbowlBackend.send_embed(source_user, description=source_msg, footer=footer_msg)
+
     else:
         descript = "%s %s... 0 scraps %s %s! Huh?" % (source_user.mention,
                                                       keyword1[0],
@@ -927,12 +965,13 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
     if fail_scraps:
         descript += "\nNote: Couldn't find `%s`!" % "`, `".join(fail_scraps)
 
-
-
     sessions[session_id]['players'][source_user.id] = source_hand
     sessions[session_id]['players'][dest_user.id] = dest_hand
 
-    return await FishbowlBackend.send_embed(ctx, description=descript, footer=footer_msg)
+    if descript:
+        await FishbowlBackend.send_embed(ctx, description=descript, footer=footer_msg)
+
+    return
 
 
 @commands.command(name='pass')
@@ -943,9 +982,6 @@ async def pass_scrap(ctx, dest: str, scraps: commands.Greedy[clean_scrap]):
 
 @pass_scrap.error
 async def pass_err(ctx, error):
-    #if isinstance(error, TimeoutError):
-    #    print("hi2")
-    #    return await FishbowlBackend.send_error(ctx, "Request timed out!")
     if isinstance(error, commands.MissingRequiredArgument):
         return await FishbowlBackend.send_error(ctx, "Missing an argument!\n"+
                                                 "Give me both the player you're passing to and the scraps you're passing!")
@@ -974,6 +1010,7 @@ async def pass_err(ctx, error):
 async def recall_hands(ctx, *args):
     user_id = ctx.author.id
     session_id = users[user_id]
+    session_update_time(session_id)
 
     session_players = sessions[session_id]['players']
     [sessions[session_id]['bowl'].extend(session_players[k]) for k in session_players]
@@ -990,6 +1027,7 @@ async def recall_hands(ctx, *args):
 async def shuffle(ctx, *args):
     user_id = ctx.author.id
     session_id = users[user_id]
+    session_update_time(session_id)
 
     sessions[session_id]['bowl'].extend(sessions[session_id]['discard'])
     sessions[session_id]['discard'] = []
@@ -1005,6 +1043,7 @@ async def shuffle(ctx, *args):
 async def reset_session(ctx, *args):
     user_id = ctx.author.id
     session_id = users[user_id]
+    session_update_time(session_id)
 
     sessions[session_id]['bowl'] = []
     sessions[session_id]['discard'] = []
@@ -1044,7 +1083,7 @@ def setup():
     bot_commands = [globals()[cmd] for cmd in help_df["Function"]]
     for bot_command in bot_commands:
         FishbowlBackend.bot.add_command(bot_command)
-
+    clean_inactive_sessions.start()
 
 
 setup()
