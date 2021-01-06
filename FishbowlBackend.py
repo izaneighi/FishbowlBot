@@ -4,7 +4,6 @@ from discord.ext import commands
 import asyncio
 
 intents = discord.Intents.default()
-intents.members = True
 
 DEFAULT_EMBED_COLOR = 0xFFA500
 ERROR_EMBED_COLOR = 0xFF6347
