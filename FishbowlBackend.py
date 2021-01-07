@@ -8,27 +8,61 @@ intents = discord.Intents.default()
 DEFAULT_EMBED_COLOR = 0xFFA500
 ERROR_EMBED_COLOR = 0xFF6347
 BUG_EMBED_COLOR = 0x5058a8
-
-with open("prefixes.json") as f:
-    prefixes = json.load(f)
-default_prefix = "!"
+DEFAULT_PREFIX = "!"
+PREFIX_JSON = "prefixes.json"
 
 
-def prefix(bot, message):
+def get_prefix(bot, message):
     if message.channel.type is not discord.ChannelType.private:
-        return prefixes.get(message.guild.id, default_prefix)
-    return default_prefix
+        with open('prefixes.json', 'r') as f:
+            prefixes = json.load(f)
+        return prefixes[str(message.guild.id)]
+    return DEFAULT_PREFIX
 
 
 client = discord.Client()
-bot = commands.Bot(command_prefix=prefix, help_command=None)
+bot = commands.Bot(command_prefix=get_prefix, help_command=None)
 
 waiting_users = []
 
 
 @bot.event
+async def on_guild_join(guild): #when the bot joins the guild
+    with open(PREFIX_JSON, 'r') as f:
+        prefixes = json.load(f)
+
+    prefixes[str(guild.id)] = DEFAULT_PREFIX
+
+    with open(PREFIX_JSON, 'w') as f:
+        json.dump(prefixes, f, indent=4)
+
+
+@bot.event
+async def on_guild_remove(guild):
+    with open(PREFIX_JSON, 'r') as f:
+        prefixes = json.load(f)
+
+    prefixes.pop(str(guild.id))
+
+    with open(PREFIX_JSON, 'w') as f:
+        json.dump(prefixes, f, indent=4)
+
+
+async def changeprefix(guild_id, prefix):
+    with open(PREFIX_JSON, 'r') as f:
+        prefixes = json.load(f)
+
+    prefixes[str(guild_id)] = prefix
+
+    with open(PREFIX_JSON, 'w') as f:
+        json.dump(prefixes, f, indent=4)
+
+    return True
+
+
+@bot.event
 async def on_ready():
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=default_prefix+"help"))
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=DEFAULT_PREFIX+"help"))
     print(f'{bot.user} has connected to Discord!')
 
 

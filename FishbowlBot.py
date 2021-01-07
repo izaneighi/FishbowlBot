@@ -43,6 +43,14 @@ class UserNotInSession(commands.CheckFailure):
     pass
 
 
+class PermissionDenied(commands.CheckFailure):
+    pass
+
+
+class CommandCannotBeDMed(commands.CheckFailure):
+    pass
+
+
 def check_user_in_session():
     async def predicate(ctx):
         user_id = ctx.author.id
@@ -58,6 +66,22 @@ def check_creator():
         session_id = users[user_id]
         if sessions[session_id]['creator'] != user_id:
             raise CreatorOnly()
+        return True
+    return commands.check(predicate)
+
+
+def check_permission(admin=True):
+    async def predicate(ctx):
+        if admin and not ctx.message.author.guild_permissions.administrator:
+             raise PermissionDenied()
+        return True
+    return commands.check(predicate)
+
+
+def check_no_dm():
+    async def predicate(ctx):
+        if ctx.channel.type is discord.ChannelType.private:
+            raise CommandCannotBeDMed()
         return True
     return commands.check(predicate)
 
@@ -156,10 +180,24 @@ async def wait_for_ready():
     await FishbowlBackend.bot.wait_until_ready()
 
 
-@commands.command()
-async def test(ctx, *args):
-    await FishbowlBackend.send_message(ctx, '{} arguments: {}'.format(len(args), ', '.join(args)))
-    return
+@commands.command(name="changeprefix")
+@check_no_dm()
+@check_permission(admin=True)
+async def change_prefix(ctx, prefix):
+    prefix_changed = await FishbowlBackend.changeprefix(ctx.guild.id, prefix)
+    if prefix_changed:
+        return await FishbowlBackend.send_message(ctx, f'Prefix changed to: `{prefix}`')
+    else:
+        return await FishbowlBackend.send_error(ctx, 'Prefix change failed!')
+
+
+@change_prefix.error
+async def changeprefix_error(ctx, error):
+    if isinstance(error, PermissionDenied):
+        return await FishbowlBackend.send_error(ctx, "Insufficient permission for this command!")
+    if isinstance(error, CommandCannotBeDMed):
+        return await FishbowlBackend.send_error(ctx, "Can't use this command in DMs!")
+    return await general_errors(ctx, error)
 
 
 @commands.command()
@@ -187,6 +225,9 @@ async def start(ctx, *args):
                                               "Fishbowl session successfully created! (Session #%s)\n" % session_id +
                                               "Other users can join with `join %s`!" % session_id)
 
+@start.error
+async def start_error(ctx, error):
+    return await general_errors(ctx, error)
 
 @commands.command()
 async def join(ctx, *args):
@@ -211,6 +252,11 @@ async def join(ctx, *args):
         await FishbowlBackend.send_message(sessions[session_id]['home_channel'], "%s joined Session #%s!" % (ctx.author.mention, session_id))
 
     return await FishbowlBackend.send_message(ctx, "%s successfully joined Session #%s!" % (ctx.author.mention, session_id))
+
+
+@join.error
+async def join_error(ctx, error):
+    return await general_errors(ctx, error)
 
 
 @check_user_in_session()
@@ -1169,6 +1215,7 @@ def setup():
     bot_commands = [globals()[cmd] for cmd in help_df["Function"]]
     for bot_command in bot_commands:
         FishbowlBackend.bot.add_command(bot_command)
+    FishbowlBackend.bot.add_command(help_bot)
     clean_inactive_sessions.start()
 
 
