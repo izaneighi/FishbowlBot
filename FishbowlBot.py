@@ -23,13 +23,15 @@ CONFIRM_TIME_OUT = 10.0
 BG_REFRESH_TIME = 60.0
 SESSION_TIMEOUT = datetime.timedelta(days=0, hours=1, seconds=0)
 BUG_REPORT_CHANNEL = 796498229872820314
+SCRAP_MAX_LEN = 1000
+EMBED_DESCRIPTION_LIMIT = 1000
+EMBED_FOOTER_LIMIT = 1000
 
 EMOJI_Y = "\N{THUMBS UP SIGN}"
 EMOJI_N = "\N{THUMBS DOWN SIGN}"
 
 help_df = pd.read_csv(r"Fishbowl_help.tsv", index_col="Command", sep="\t").fillna('')
 help_df["DetailedHelp"] = help_df["DetailedHelp"].str.replace('\\\\n', '\n', regex=True)
-bot_command_dict = {cmd: cmd_help for cmd, cmd_help in zip(help_df["CommandExample"], help_df["Help"])}
 
 sessions = {}
 users = {}
@@ -70,10 +72,12 @@ def check_creator():
     return commands.check(predicate)
 
 
-def check_permission(admin=True):
+def check_permission(admin=False, server_owner=False):
     async def predicate(ctx):
         if admin and not ctx.message.author.guild_permissions.administrator:
-             raise PermissionDenied()
+            raise PermissionDenied()
+        if server_owner and not ctx.message.author.id == ctx.guild.owner_id:
+            raise PermissionDenied()
         return True
     return commands.check(predicate)
 
@@ -89,6 +93,8 @@ def check_no_dm():
 async def general_errors(ctx, error):
     if isinstance(error, UserNotInSession):
         return await FishbowlBackend.send_error(ctx, "You are currently not in a session!")
+    if isinstance(error, CreatorOnly):
+        return await FishbowlBackend.send_error(ctx, "Only the creator of the session can use this command!")
     if isinstance(error, commands.ExpectedClosingQuoteError) or isinstance(error, commands.InvalidEndOfQuotedStringError):
         return await FishbowlBackend.send_error(ctx, str(error))
     await FishbowlBackend.send_error(ctx, "Something unexpected broke!")
@@ -182,7 +188,7 @@ async def wait_for_ready():
 
 @commands.command(name="changeprefix")
 @check_no_dm()
-@check_permission(admin=True)
+@check_permission(server_owner=True)
 async def change_prefix(ctx, prefix):
     prefix_changed = await FishbowlBackend.changeprefix(ctx.guild.id, prefix)
     if prefix_changed:
@@ -219,7 +225,8 @@ async def start(ctx, *args):
                             'players': {creator_id: []},
                             'creator': creator_id,
                             'home_channel': ctx.channel,
-                            'total_scraps': 0}
+                            'total_scraps': 0,
+                            'ban_list': []}
     session_update_time(session_id)
     return await FishbowlBackend.send_message(ctx,
                                               "Fishbowl session successfully created! (Session #%s)\n" % session_id +
@@ -228,6 +235,7 @@ async def start(ctx, *args):
 @start.error
 async def start_error(ctx, error):
     return await general_errors(ctx, error)
+
 
 @commands.command()
 async def join(ctx, *args):
@@ -244,6 +252,10 @@ async def join(ctx, *args):
         return await FishbowlBackend.send_error(ctx,
                                                 "Session #%s is at its maximum of %d players! Please try again later!" %
                                                 (session_id, MAX_USERS_PER_SESSION))
+    if ctx.author.id in sessions[session_id]['ban_list']:
+        return await FishbowlBackend.send_error(ctx,
+                                                "Can't join! You were banned from Session #%s by the creator!" % session_id)
+
     sessions[session_id]['players'][user_id] = []
     users[user_id] = session_id
     session_update_time(session_id)
@@ -405,6 +417,9 @@ async def add_master(ctx, scraps, to_hand=False):
                                          color=FishbowlBackend.ERROR_EMBED_COLOR)
         return
 
+    if any(len(scrap) > SCRAP_MAX_LEN for scrap in scraps):
+        return await FishbowlBackend.send_error(ctx, "Scrap(s) too long! %d characters or less, please!" % SCRAP_MAX_LEN)
+
     sessions[session_id]['total_scraps'] += len(scraps)
     if to_hand:
         keywords = ("to their hand", "Hand")
@@ -433,7 +448,7 @@ async def add(ctx, scraps: commands.Greedy[clean_scrap]):
     return await add_master(ctx, scraps, to_hand=False)
 
 
-@commands.command(name="addtohand")
+@commands.command(name="addtohand", aliases=["add2hand"])
 @check_user_in_session()
 async def add_to_hand(ctx, scraps: commands.Greedy[clean_scrap]):
     return await add_master(ctx, scraps, to_hand=True)
@@ -501,8 +516,8 @@ async def draw_master(ctx, args, from_discard=False):
     if not had_err:
         public_msg = "%s drew%s!" % (ctx.author.mention, descript)
         private_msg = "You drew%s" % descript
-        if drawn_scraps:
-            private_msg += ":\n`%s`" % "`, `".join(drawn_scraps)
+        #if drawn_scraps:
+        #    private_msg += ":\n`%s`" % "`, `".join(drawn_scraps)
     else:
         public_msg = descript
         private_msg = descript
@@ -513,14 +528,73 @@ async def draw_master(ctx, args, from_discard=False):
 
     if ctx.message.channel.type is not discord.ChannelType.private:
         await FishbowlBackend.send_embed(ctx, description=public_msg, footer=footer)
-        if not had_err:
+
+    if not had_err:
+        if drawn_scraps:
+            await list_send(ctx.author, description=private_msg, entries=drawn_scraps, footer=footer)
+        else:
             await FishbowlBackend.send_embed(ctx.author, description=private_msg, footer=footer)
-    else:
-        await FishbowlBackend.send_embed(ctx.author, description=private_msg, footer=footer)
 
     if ctx.channel.id != sessions[session_id]['home_channel'].id:
         await FishbowlBackend.send_embed(sessions[session_id]['home_channel'], description=public_msg, footer=footer)
 
+    return
+
+
+async def list_send(ctx, description, entries, end_description="", title="", footer=""):
+    list_char_lim = EMBED_DESCRIPTION_LIMIT
+    delineator = "`, `"
+    delin_len = len(delineator)
+    split_list = []
+    mini_list = []
+    curr_len = 0
+
+    for minientry in entries:
+        curr_len += (len(minientry) + delin_len)
+        if curr_len >= list_char_lim:
+            split_list.append(mini_list)
+            mini_list = []
+            curr_len = len(minientry) + delin_len
+        mini_list.append(minientry)
+
+    if mini_list:
+        split_list.append(mini_list)
+
+    if len(split_list) == 1:
+        if description:
+            descript = description + ":\n"
+        else:
+            descript = description
+        if end_description:
+            end_descript = "\n" +end_description
+        else:
+            end_descript = ""
+
+        return await FishbowlBackend.send_embed(ctx,
+                                                title=title,
+                                                description=descript + "`" + delineator.join(entries) + "`" + end_descript,
+                                                footer=footer)
+
+    if not description and title:
+        descripts = ["" for i in range(len(split_list))]
+        titles = [title+" (%d/%d)" % (i+1, len(split_list)) for i in range(len(split_list))]
+    else:
+        descripts = [description+" (%d/%d):\n" % (i+1, len(split_list)) for i in range(len(split_list))]
+        titles = [title for i in range(len(split_list))]
+
+    for i in range(len(split_list)):
+        if i < len(split_list)-1:
+            sub_foot = ""
+            end_descript = ""
+        else:
+            sub_foot = footer
+            if end_description:
+                end_descript = "\n" + end_description
+
+        await FishbowlBackend.send_embed(ctx,
+                                         title=titles[i],
+                                         description=descripts[i]+"`"+delineator.join(split_list[i]) + "`" + end_descript,
+                                         footer=sub_foot)
     return
 
 
@@ -571,9 +645,7 @@ async def peek(ctx, num_draw: int):
     if ctx.channel.id != sessions[session_id]['home_channel'].id:
         await FishbowlBackend.send_embed(sessions[session_id]['home_channel'], description=public_msg, footer=footer)
 
-    return await FishbowlBackend.send_embed(ctx.author,
-                                            description="You peek at %d scrap(s) in the bowl:\n`%s`" % (num_draw, "`, `".join(drawn_scraps)),
-                                            footer=footer)
+    return await list_send(ctx.author, description="You peek at %d scrap(s) in the bowl" % num_draw, entries=drawn_scraps, footer=footer)
 
 
 @peek.error
@@ -606,19 +678,22 @@ async def hand(ctx, show_keyword: typing.Optional[clean_scrap] = ''):
         await FishbowlBackend.send_embed(ctx,
                                            "%s is checking their hand..." % ctx.author.mention,
                                            footer="Hand: %d (Session #%s)" % (len(user_hand), session_id))
-    if user_hand:
-        hand_list = "`%s`" % "`, `".join(user_hand)
-    else:
-        hand_list = "No scraps in hand!"
     if public_show:
         target_ctx = ctx
     else:
         target_ctx = ctx.author
-    await FishbowlBackend.send_embed(target_ctx,
-                                     title="%s's Hand:" % ctx.author.name,
-                                     description=hand_list,
-                                     footer="Hand: %d (Session #%s)" % (len(user_hand), session_id))
-    return
+
+    if user_hand:
+        return await list_send(target_ctx,
+                               title="%s's Hand" % ctx.author.name,
+                               description="",
+                               entries=user_hand,
+                               footer="Hand: %d (Session #%s)" % (len(user_hand), session_id))
+    else:
+        return await FishbowlBackend.send_embed(target_ctx,
+                                         title="%s's Hand" % ctx.author.name,
+                                         description="No scraps in hand!",
+                                         footer="Hand: %d (Session #%s)" % (len(user_hand), session_id))
 
 
 @hand.error
@@ -652,7 +727,7 @@ async def edit(ctx, old_word: clean_scrap, new_word: clean_scrap, *args):
                                                 footer="(Session #%s)" % (session_id))
     except ValueError:
         pass
-
+    #TODO: if new word is too big
     try:
         word_i = sessions[session_id]['bowl'].index(old_word)
         if user_id != sessions[session_id]['creator']:
@@ -676,6 +751,26 @@ async def edit_error(ctx, error):
         return await general_errors(ctx, error)
 
 
+def cut_off_list(char_limit, entries, delineator="`, `", end_part=" and more!"):
+    delin_len = len(delineator)
+    run_total = [0]
+    curr_len = 0
+    abbrv_char_limit = char_limit - len(end_part)
+    end_early = False
+    bad_limit = len(entries)
+    for i in range(len(entries)):
+        curr_len += (len(entries[i]) + delin_len)
+        if curr_len >= char_limit:
+            bad_limit = next((j for j in range(len(run_total)) if run_total[j] > abbrv_char_limit), len(run_total))
+            end_early = True
+            break
+        run_total.append(curr_len)
+    descript = "`%s`" % delineator.join(entries[0:bad_limit])
+    if end_early:
+        descript += end_part
+    return descript
+
+
 async def discard_destroy_return(ctx, scraps, func_type):
     keyword = func_type
     user_id = ctx.author.id
@@ -691,9 +786,9 @@ async def discard_destroy_return(ctx, scraps, func_type):
         return await FishbowlBackend.send_error(ctx, "%s doesn't have any scraps in their hand!" % ctx.author.mention)
 
     # you SURE this is a command to toss your hand?
-    if scraps[0] == 'hand' and len(scraps) == 1 and 'hand' not in scraps:
+    if (scraps[0] == 'hand') and (len(scraps) == 1) and ('hand' not in user_hand):
         success_discard = user_hand
-        if func_type == 'discard':
+        if func_type in ['play', 'discard']:
             sessions[session_id]['discard'] += user_hand
         elif func_type == 'return':
             sessions[session_id]['bowl'] += user_hand
@@ -702,7 +797,7 @@ async def discard_destroy_return(ctx, scraps, func_type):
         for scrap in scraps:
             if scrap in user_hand:
                 user_hand.remove(scrap)
-                if func_type == 'discard':
+                if func_type in ['play', 'discard']:
                     sessions[session_id]['discard'].append(scrap)
                 elif func_type == 'return':
                     sessions[session_id]['bowl'].append(scrap)
@@ -720,13 +815,21 @@ async def discard_destroy_return(ctx, scraps, func_type):
                                                                     len(sessions[session_id]['bowl']),
                                                                     len(sessions[session_id]['discard']),
                                                                     session_id)
+    if fail_discard:
+        the_fun = cut_off_list(char_limit=EMBED_FOOTER_LIMIT,  entries=fail_discard, end_part=", etc.")
+        embed_footer = "\nNote: Couldn't find %s" % the_fun
+    else:
+        embed_footer = ""
 
     if not success_discard:
-        embed_descript = "%s %ss... 0 scraps from their hand! Huh?" % (ctx.author.mention, keyword)
+        return await FishbowlBackend.send_embed(ctx,
+                                                description="%s %ss... 0 scraps from their hand! Huh?%s" % (ctx.author.mention, keyword, embed_footer),
+                                                footer=big_footer)
     else:
-        embed_descript = "%s %ss %d scrap(s) from their hand...\n`%s`" % (ctx.author.mention,
-                                                             keyword, len(success_discard),
-                                                             "`, `".join(success_discard))
+        embed_descript = "%s %ss %d scrap(s) from their hand" % (ctx.author.mention, keyword, len(success_discard))
+        await list_send(ctx, description=embed_descript, entries=success_discard, end_description=embed_footer,
+                        footer=big_footer)
+        embed_descript += "!"
 
         if ctx.channel.id != sessions[session_id]['home_channel'].id:
             await FishbowlBackend.send_embed(sessions[session_id]['home_channel'],
@@ -735,33 +838,23 @@ async def discard_destroy_return(ctx, scraps, func_type):
                                                                                   len(success_discard)),
                                              footer=big_footer)
 
-    if fail_discard:
-        embed_descript += "\nNote: Couldn't find %s!" % ", ".join(fail_discard)
-
-    return await FishbowlBackend.send_embed(ctx,
-                                            description=embed_descript,
-                                            footer="Hand: %d, Bowl: %d, Discard: %d (Session #%s)" % (len(sessions[session_id]['players'][user_id]),
-                                                                                                      len(sessions[session_id]['bowl']),
-                                                                                                      len(sessions[session_id]['discard']),
-                                                                                                      session_id))
-
 
 @commands.command(aliases=["play"])
 @check_user_in_session()
 async def discard(ctx, scraps: commands.Greedy[clean_scrap]):
-    return await discard_destroy_return(ctx, scraps, func_type='discard')
+    return await discard_destroy_return(ctx, scraps, func_type=ctx.invoked_with)
 
 
 @commands.command()
 @check_user_in_session()
 async def destroy(ctx, scraps: commands.Greedy[clean_scrap]):
-    return await discard_destroy_return(ctx, scraps, func_type='destroy')
+    return await discard_destroy_return(ctx, scraps, func_type=ctx.invoked_with)
 
 
 @commands.command(name="return")
 @check_user_in_session()
 async def return_scrap(ctx, scraps: commands.Greedy[clean_scrap]):
-    return await discard_destroy_return(ctx, scraps, func_type='return')
+    return await discard_destroy_return(ctx, scraps, func_type=ctx.invoked_with)
 
 
 @discard.error
@@ -792,17 +885,20 @@ async def see(ctx, keyword: str, *args):
         return await FishbowlBackend.send_error(ctx,
                                                 "Don't recognize `%s`! Use `bowl` to check the bowl, or `discard` to check the discard pile!" % keyword)
 
-    if not look_pile:
-        descript = "The %s is empty!" % grammar_words[0]
-    else:
-        descript = "Current scraps in the %s:\n`%s`" % (grammar_words[0], "`, `".join(look_pile))
     footer = "%s: %d (Session #%s)" % (grammar_words[1], len(look_pile), session_id)
 
     if ctx.channel.id != sessions[session_id]['home_channel'].id:
         await FishbowlBackend.send_embed(sessions[session_id]['home_channel'],
                                          description="%s checks the %s!" % (ctx.author.mention, keyword),
                                          footer=footer)
-    return await FishbowlBackend.send_embed(ctx, description=descript, footer=footer)
+    if not look_pile:
+        return await FishbowlBackend.send_embed(ctx, description="The %s is empty!" % grammar_words[0], footer=footer)
+    else:
+        return await list_send(ctx,
+                               title="",
+                               description="Current scraps in the %s" % grammar_words[0],
+                               entries=look_pile,
+                               footer=footer)
 
 
 @see.error
@@ -831,7 +927,7 @@ async def show_hand(ctx, dest: str):
             target_user = await username_session_lookup(session_id, dest)
             if target_user is None:
                 return await FishbowlBackend.send_error(ctx,
-                                                        "Can't find the player! Trying mentioning them or their full username!")
+                                                        "Can't find the player! Names are case sensitive; you can also mention them!")
 
         if target_user.id == user_id:
             return await FishbowlBackend.send_error(ctx, "Can't show your own hand to yourself! Try `hand` instead!")
@@ -869,21 +965,24 @@ async def show_hand(ctx, dest: str):
 
     user_hand = sessions[session_id]['players'][user_id]
     if not user_hand:
-        descript = "No scraps in their hand!"
+        return await FishbowlBackend.send_embed(target_ctx,
+                                   title="%s's Hand" % ctx.author.name,
+                                   description="No scraps in hand!",
+                                   footer="Hand: %d (Session #%s)" % (len(user_hand), session_id)
+                                   )
     else:
-        descript = "`%s`" % "`, `".join(user_hand)
-    return await FishbowlBackend.send_embed(target_ctx,
-                                            title="%s's Hand:" % ctx.author.name,
-                                            description=descript,
-                                            footer="Hand: %d (Session #%s)" % (len(user_hand), session_id)
-                                            )
+        return await list_send(target_user,
+                               title="%s's Hand" % ctx.author.name,
+                               description="",
+                               entries=user_hand,
+                               footer="Hand: %d (Session #%s)" % (len(user_hand), session_id))
 
 
 @show_hand.error
 async def show_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
-        return await FishbowlBackend.send_error(ctx, "Tell me which user you're showing your hand to!\n" +
-                                                "If you're showing the hand to all, do `show all` instead!")
+        return await FishbowlBackend.send_error(ctx, "Tell me which user you're showing your hand to! (Case sensitive)\n" +
+                                                "If you're showing the hand to all, do `show public` instead!")
     else:
         return await general_errors(ctx, error)
 
@@ -939,7 +1038,7 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
         target_user = await username_session_lookup(session_id, dest)
         if target_user is None:
             return await FishbowlBackend.send_error(ctx,
-                                                    "Can't find %s! Trying mentioning them or their full username!" % dest)
+                                                    "Can't find the player! Names are case sensitive; you can also mention them!" % dest)
 
     if target_user.id not in sessions[session_id]['players']:
         return await FishbowlBackend.send_error(ctx, "%s isn't in the session!" % target_user.name)
@@ -991,25 +1090,34 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
 
     footer_msg = "%s's Hand: %d, %s's Hand: %d (Session #%s)" % (source_user.name, len(source_hand),
                                                                  dest_user.name, len(dest_hand), session_id)
-    word_list = "`%s`" % "`, `".join(success_scraps)
+
+    if fail_scraps:
+        not_found_list = cut_off_list(char_limit=EMBED_FOOTER_LIMIT,  entries=fail_scraps, end_part=", etc.")
+        embed_footer = "\nNote: Couldn't find %s" % not_found_list
+    else:
+        embed_footer = ""
 
     if success_scraps:
         if ctx.message.channel.type is discord.ChannelType.private:
             confirm_ctx = target_user
-            confirm_msg = "%s is trying to %s %d scrap(s) %s you" % (ctx.author.mention, keyword2[0], len(scraps),
+            confirm_msg = "%s is trying to %s %d scrap(s) %s you" % (ctx.author.mention, keyword2[0], len(success_scraps),
                                                                    keyword2[1])
             descript = ""
         else:
             confirm_ctx = ctx
-            confirm_msg = "%s is trying to %s %d scrap(s) %s %s" % (ctx.author.mention, keyword2[0], len(scraps),
+            confirm_msg = "%s is trying to %s %d scrap(s) %s %s" % (ctx.author.mention, keyword2[0], len(success_scraps),
                                                                   keyword2[1], target_user.mention)
             if word_scrap:
-                descript = "%s %s %d scrap(s) %s %s:\n%s" % (source_user.mention,  # User1
-                                                               keyword1[0],  # passed/took
-                                                               len(success_scraps),
-                                                               keyword1[1],  # to/from
-                                                               dest_user.mention,  # User2
-                                                               word_list)
+                # public message???
+                await list_send(dest_user,
+                                description="%s %s %d scrap(s) %s %s" % (source_user.mention,  # User1
+                                                                         keyword1[0],  # passed/took
+                                                                         len(success_scraps),
+                                                                         keyword1[1],  # to/from
+                                                                         dest_user.mention),
+                                end_description=embed_footer,
+                                entries=success_scraps,
+                                footer=footer_msg)
             else:
                 descript = "%s %s %d scrap(s) %s %s!" % (source_user.mention,  # User1
                                                            keyword1[0],  # passed/took
@@ -1017,7 +1125,8 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
                                                            keyword1[1],  # to/from
                                                            dest_user.mention)  # User2)
         if word_scrap:
-            confirm_msg += ":\n`%s`\n" % "`, `".join(success_scraps)
+            cut_list = cut_off_list(EMBED_DESCRIPTION_LIMIT, entries=success_scraps, end_part=", etc.")
+            confirm_msg += ":\n`%s`\n" % cut_list
         else:
             confirm_msg += "! "
 
@@ -1032,22 +1141,32 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
         # DM people if DMs OR if people are passing random scraps in public
         if ctx.message.channel.type is discord.ChannelType.private or not word_scrap:
             if pass_flag:
-                dest_msg = "%s passed you %d scrap(s):\n%s" % (source_user.mention, len(success_scraps), word_list)
-                source_msg = "You passed %s %d scrap(s):\n%s" % (dest_user.mention, len(success_scraps), word_list)
+                await list_send(dest_user,
+                                description="%s passed you %d scrap(s)" % (source_user.mention, len(success_scraps)),
+                                entries=success_scraps,
+                                footer=footer_msg)
+                await list_send(source_user,
+                                description="You passed %s %d scrap(s)" % (dest_user.mention, len(success_scraps)),
+                                entries=success_scraps,
+                                footer=footer_msg,
+                                end_description=embed_footer)
             else:
-                dest_msg = "You took %d scrap(s) from %s:\n%s" % (len(success_scraps), source_user.mention, word_list)
-                source_msg = "%s took %d scrap(s) from you:\n%s" % (dest_user.mention, len(success_scraps), word_list)
+                await list_send(dest_user,
+                                description="You took %d scrap(s) from %s" % (len(success_scraps), source_user.mention),
+                                entries=success_scraps,
+                                footer=footer_msg,
+                                end_description=embed_footer)
 
-            await FishbowlBackend.send_embed(dest_user, description=dest_msg, footer=footer_msg)
-            await FishbowlBackend.send_embed(source_user, description=source_msg, footer=footer_msg)
+                await list_send(source_user,
+                                description="%s took %d scrap(s) from you" % (dest_user.mention, len(success_scraps)),
+                                entries=success_scraps,
+                                footer=footer_msg)
 
     else:
         descript = "%s %s... 0 scraps %s %s! Huh?" % (source_user.mention,
                                                       keyword1[0],
                                                       keyword1[1],
                                                       dest_user.mention)
-    if fail_scraps:
-        descript += "\nNote: Couldn't find `%s`!" % "`, `".join(fail_scraps)
 
     sessions[session_id]['players'][source_user.id] = source_hand
     sessions[session_id]['players'][dest_user.id] = dest_hand
@@ -1062,12 +1181,12 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
                                          footer=footer_msg)
 
     if descript:
-        await FishbowlBackend.send_embed(ctx, description=descript, footer=footer_msg)
+        await FishbowlBackend.send_embed(ctx, description=descript+embed_footer, footer=footer_msg)
 
     return
 
 
-@commands.command(name='pass')
+@commands.command(name='pass', aliases=['give'])
 @check_user_in_session()
 async def pass_scrap(ctx, dest: str, scraps: commands.Greedy[clean_scrap]):
     return await pass_take(ctx, dest, scraps, pass_flag=True)
@@ -1082,7 +1201,7 @@ async def pass_err(ctx, error):
         return await general_errors(ctx, error)
 
 
-@commands.command(name='take')
+@commands.command(name='take', aliases=['steal'])
 @check_user_in_session()
 async def take_scrap(ctx, dest: str, scraps: commands.Greedy[clean_scrap]):
     return await pass_take(ctx, dest, scraps, pass_flag=False)
@@ -1140,35 +1259,140 @@ async def shuffle(ctx, *args):
                                             footer="Bowl: %d (Session #%s)" % (len(sessions[session_id]['bowl']), session_id))
 
 
-@commands.command(name="reset", aliases=["destroyall"])
+@shuffle.error
+@recall_hands.error
+async def recall_error(ctx, error):
+    return await general_errors(ctx, error)
+
+
+@commands.command(name="reset", aliases=['empty', 'dump'])
 @check_user_in_session()
 @check_creator()
-async def reset_session(ctx, *args):
+async def empty_reset(ctx, arg: clean_arg):
     user_id = ctx.author.id
     session_id = users[user_id]
     session_update_time(session_id)
 
-    sessions[session_id]['bowl'] = []
-    sessions[session_id]['discard'] = []
-    sessions[session_id]['players'] = {k: [] for k in sessions[session_id]['players']}
-    sessions[session_id]['total_scraps'] = 0
+    discard_all = arg in ['all', 'session']
+    descripts = []
+    if discard_all or arg in ['bowl', 'deck']:
+        descripts.append("bowl")
+        sessions[session_id]['bowl'] = []
+    if discard_all or arg in ['discard', 'graveyard', 'trash']:
+        descripts.append("discard pile")
+        sessions[session_id]['discard'] = []
+    if discard_all or arg in ['hands']:
+        descripts.append("player hands")
+        sessions[session_id]['players'] = {k: [] for k in sessions[session_id]['players']}
+    sessions[session_id]['total_scraps'] = len(sessions[session_id]['bowl']) + \
+                                           len(sessions[session_id]['discard']) + \
+                                           sum(len(sessions[session_id]['players'][p_id]) for p_id in sessions[session_id]['players'])
 
+    if len(descripts) <= 2:
+        descriptions = "and ".join(descripts)
+    else:
+        descriptions = ", ".join(descripts[:-1])
+        descriptions += (", and " + descripts[-1])
     if ctx.channel.id != sessions[session_id]['home_channel'].id:
         await FishbowlBackend.send_embed(sessions[session_id]['home_channel'],
-                                         description="%s reset the session, destroying all scraps!" % ctx.author.mention,
+                                         description="%s emptied the %s!" % (ctx.author.mention, descriptions),
                                          footer="(Session #%s)" % session_id)
 
     return await FishbowlBackend.send_embed(ctx,
-                                            description="Resetting session and destroying all scraps!",
-                                            footer="(Session) #%s" % session_id)
+                                            description="Emptying the %s!" % descriptions,
+                                            footer="(Session #%s)" % session_id)
 
 
-@shuffle.error
-@recall_hands.error
-@reset_session.error
-async def recall_error(ctx, error):
-    if isinstance(error, CreatorOnly):
-        return await FishbowlBackend.send_error(ctx, "Only the creator of the session can use this command!")
+@empty_reset.error
+async def empty_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        return await FishbowlBackend.send_error(ctx, "Give me `all`, `bowl`, `discard`, or `hands` to empty it!")
+    else:
+        return await general_errors(ctx, error)
+
+
+@commands.command()
+@check_user_in_session()
+@check_creator()
+async def ban(ctx, *args):
+    user_id = ctx.author.id
+    session_id = users[user_id]
+    session_update_time(session_id)
+
+    if not args:
+        return await FishbowlBackend.send_error(ctx,
+                                                "Please tell me which user(s) you want to unban!")
+
+    for arg in args:
+        try:
+            target_user = await commands.MemberConverter().convert(ctx, arg)
+        except commands.BadArgument:
+            target_user = await username_session_lookup(session_id, arg)
+            if target_user is None:
+                return await FishbowlBackend.send_error(ctx,
+                                                        "Can't find %s! Names are case sensitive; you can also mention them!" % arg)
+
+        if target_user.id in sessions[session_id]['ban_list']:
+            await FishbowlBackend.send_error(ctx, "%s is already banned from Session #%s!" % (target_user.mention, session_id))
+            continue
+        if target_user.id == ctx.author.id:
+            await FishbowlBackend.send_error(ctx, "Can't ban yourself!")
+            continue
+        if target_user.id == FishbowlBackend.bot.user.id:
+            await FishbowlBackend.send_error(ctx, "Sorry, can't ban me!")
+            continue
+        sessions[session_id]['ban_list'].append(target_user.id)
+        if target_user.id in sessions[session_id]['players']:
+            sessions[session_id]['total_scraps'] -= len(sessions[session_id]['players'][target_user.id])
+            del sessions[session_id]['players'][target_user.id]
+            del users[target_user.id]
+        await FishbowlBackend.send_message(ctx, "%s banned %s from Session #%s!" % (ctx.author.mention,
+                                                                                    target_user.mention,
+                                                                                    session_id))
+    return
+
+
+@commands.command()
+@check_user_in_session()
+@check_creator()
+async def unban(ctx, *args):
+    user_id = ctx.author.id
+    session_id = users[user_id]
+    session_update_time(session_id)
+
+    if not args:
+        return await FishbowlBackend.send_error(ctx,
+                                                "Please tell me which user(s) you want to unban!")
+
+    for arg in args:
+        try:
+            target_user = await commands.MemberConverter().convert(ctx, arg)
+        except commands.BadArgument:
+            target_user = await username_session_lookup(session_id, arg)
+            if target_user is None:
+                return await FishbowlBackend.send_error(ctx,
+                                                        "Can't find %s! Names are case sensitive; you can also mention them!" % arg)
+        if target_user.id == ctx.author.id:
+            await FishbowlBackend.send_error(ctx, "Can't unban yourself!")
+            continue
+        if target_user.id == FishbowlBackend.bot.user.id:
+            await FishbowlBackend.send_error(ctx, "Sorry, can't unban me!")
+            continue
+        if target_user.id not in sessions[session_id]['ban_list']:
+            await FishbowlBackend.send_error(ctx, "Can't find %s in the banlist!" % target_user.mention)
+            continue
+        sessions[session_id]['ban_list'].remove(target_user.id)
+        await FishbowlBackend.send_message(ctx, "%s has unbanned %s from Session #%s!" % (ctx.author.mention,
+                                                                                     target_user.mention,
+                                                                                     session_id))
+    return
+
+
+@ban.error
+@unban.error
+async def ban_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        return await FishbowlBackend.send_error(ctx, 'Please tell me which users you want to ban!')
     else:
         return await general_errors(ctx, error)
 
@@ -1181,9 +1405,21 @@ async def help_bot(ctx, keyword: clean_arg = ""):
                                                   "You can also DM me commands! Good if you want to add words to the bowl without revealing them.\n\n" +
                                                   "For a list of all commands, do `help commands`. You can also ask me for detailed help with a specific command. (i.e. `help start`)")
     if keyword in ["all", "commands", "command", "list"]:
-        return await FishbowlBackend.send_embed(ctx, "", fields=bot_command_dict)
+        grouped_df = help_df.sort_values(['Command'], ascending=True).groupby("Category")
+        for groupname, groupdf in grouped_df:
+            bot_command_dict = {cmd: cmd_help for cmd, cmd_help in zip(groupdf["CommandExample"], groupdf["Help"])}
+            await FishbowlBackend.send_embed(ctx, "",
+                                             fields=bot_command_dict,
+                                             title="%s Commands:" % groupname)
+        return
     if keyword in help_df.index:
-        return await FishbowlBackend.send_message(ctx, "**%s**:\n" % help_df.loc[keyword]["CommandExample"] + help_df.loc[keyword]["DetailedHelp"])
+        if help_df.loc[keyword]["Aliases"]:
+            footer = "Can also be invoked with: " + help_df.loc[keyword]["Aliases"]
+        else:
+            footer = ""
+        return await FishbowlBackend.send_embed(ctx,
+                                                "**%s**:\n" % help_df.loc[keyword]["CommandExample"] + help_df.loc[keyword]["DetailedHelp"],
+                                                footer=footer)
     else:
         return await FishbowlBackend.send_error(ctx, "Don't recognize that help query! Try `help commands` for a list of all commands, or ask me for a specific command! (i.e. `help start`)")
 
@@ -1215,7 +1451,7 @@ def setup():
     bot_commands = [globals()[cmd] for cmd in help_df["Function"]]
     for bot_command in bot_commands:
         FishbowlBackend.bot.add_command(bot_command)
-    FishbowlBackend.bot.add_command(help_bot)
+    #FishbowlBackend.bot.add_command(help_bot)
     clean_inactive_sessions.start()
 
 

@@ -8,13 +8,14 @@ intents = discord.Intents.default()
 DEFAULT_EMBED_COLOR = 0xFFA500
 ERROR_EMBED_COLOR = 0xFF6347
 BUG_EMBED_COLOR = 0x5058a8
+MESSAGE_MAX_LEN = 2000
 DEFAULT_PREFIX = "!"
 PREFIX_JSON = "prefixes.json"
 
 
 def get_prefix(bot, message):
     if message.channel.type is not discord.ChannelType.private:
-        with open('prefixes.json', 'r') as f:
+        with open(PREFIX_JSON, 'r') as f:
             prefixes = json.load(f)
         return prefixes[str(message.guild.id)]
     return DEFAULT_PREFIX
