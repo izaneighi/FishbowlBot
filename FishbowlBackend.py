@@ -17,7 +17,10 @@ def get_prefix(bot, message):
     if message.channel.type is not discord.ChannelType.private:
         with open(PREFIX_JSON, 'r') as f:
             prefixes = json.load(f)
-        return prefixes[str(message.guild.id)]
+        if str(message.guild.id) in prefixes:
+            return prefixes[str(message.guild.id)]
+        else:
+            prefixes[str(message.guild.id)] = DEFAULT_PREFIX
     return DEFAULT_PREFIX
 
 

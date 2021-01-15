@@ -535,7 +535,7 @@ async def draw_master(ctx, args, from_discard=False):
         else:
             await FishbowlBackend.send_embed(ctx.author, description=private_msg, footer=footer)
 
-    if ctx.channel.id != sessions[session_id]['home_channel'].id:
+    if ctx.channel.id != sessions[session_id]['home_channel'].id and not had_err:
         await FishbowlBackend.send_embed(sessions[session_id]['home_channel'], description=public_msg, footer=footer)
 
     return
