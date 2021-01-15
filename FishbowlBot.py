@@ -1,6 +1,6 @@
 # bot.py
 import os
-import json
+#import json
 import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
@@ -210,7 +210,7 @@ async def changeprefix_error(ctx, error):
 async def start(ctx, *args):
     num_sessions = len(sessions)
     if len(sessions) > MAX_TOTAL_SESSIONS:
-        return await FishbowlBackend.send_error(ctx, "Bot is handling too many sessions right now! Please try again later!" % MAX_TOTAL_SESSIONS)
+        return await FishbowlBackend.send_error(ctx, "Bot is handling too many sessions right now! Please try again later!")
 
     creator_id = ctx.author.id
     session_id = str(num_sessions)
@@ -323,7 +323,7 @@ async def leave(ctx, *args):
     user_id = ctx.author.id
     session_id = users[user_id]
     if session_id not in sessions:
-        return await FishbowlBackend.send_error(ctx, "Oops! Internal error!" % session_id)
+        return await FishbowlBackend.send_error(ctx, "Oops! Internal error!")
 
     session_update_time(session_id)
     if len(args) > 0:
@@ -480,7 +480,7 @@ async def draw_master(ctx, args, from_discard=False):
     had_err = False
     if is_int:
         if args < 0:
-            return await FishbowlBackend.send_error("Can't draw negative scraps!")
+            return await FishbowlBackend.send_error(ctx, "Can't draw negative scraps!")
         if args == 0:
             drawn_scraps = []
             descript = "... 0 scraps from the %s! Huh?" % keyword
@@ -590,6 +590,8 @@ async def list_send(ctx, description, entries, end_description="", title="", foo
             sub_foot = footer
             if end_description:
                 end_descript = "\n" + end_description
+            else:
+                end_descript = ""
 
         await FishbowlBackend.send_embed(ctx,
                                          title=titles[i],
@@ -600,13 +602,17 @@ async def list_send(ctx, description, entries, end_description="", title="", foo
 
 @commands.command()
 @check_user_in_session()
-async def draw(ctx, args: commands.Greedy[clean_scrap]=["1"]):
+async def draw(ctx, args=None):
+    if args is None:
+        args = ["1"]
     return await draw_master(ctx, args, from_discard=False)
 
 
 @commands.command(name="drawfromdiscard", aliases=["drawdiscard", "discarddraw"])
 @check_user_in_session()
-async def draw_from_discard(ctx, args: commands.Greedy[clean_scrap]=["1"]):
+async def draw_from_discard(ctx, args=None):
+    if args is None:
+        args = ["1"]
     return await draw_master(ctx, args, from_discard=True)
 
 
@@ -971,7 +977,7 @@ async def show_hand(ctx, dest: str):
                                    footer="Hand: %d (Session #%s)" % (len(user_hand), session_id)
                                    )
     else:
-        return await list_send(target_user,
+        return await list_send(target_ctx,
                                title="%s's Hand" % ctx.author.name,
                                description="",
                                entries=user_hand,
@@ -1038,7 +1044,7 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
         target_user = await username_session_lookup(session_id, dest)
         if target_user is None:
             return await FishbowlBackend.send_error(ctx,
-                                                    "Can't find the player! Names are case sensitive; you can also mention them!" % dest)
+                                                    "Can't find the player! Names are case sensitive; you can also mention them!")
 
     if target_user.id not in sessions[session_id]['players']:
         return await FishbowlBackend.send_error(ctx, "%s isn't in the session!" % target_user.name)
@@ -1101,12 +1107,12 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
         if ctx.message.channel.type is discord.ChannelType.private:
             confirm_ctx = target_user
             confirm_msg = "%s is trying to %s %d scrap(s) %s you" % (ctx.author.mention, keyword2[0], len(success_scraps),
-                                                                   keyword2[1])
+                                                                     keyword2[1])
             descript = ""
         else:
             confirm_ctx = ctx
             confirm_msg = "%s is trying to %s %d scrap(s) %s %s" % (ctx.author.mention, keyword2[0], len(success_scraps),
-                                                                  keyword2[1], target_user.mention)
+                                                                    keyword2[1], target_user.mention)
             if word_scrap:
                 # public message???
                 await list_send(dest_user,
@@ -1118,6 +1124,7 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
                                 end_description=embed_footer,
                                 entries=success_scraps,
                                 footer=footer_msg)
+                descript = ""
             else:
                 descript = "%s %s %d scrap(s) %s %s!" % (source_user.mention,  # User1
                                                            keyword1[0],  # passed/took
