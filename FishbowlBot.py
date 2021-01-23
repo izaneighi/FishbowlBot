@@ -496,17 +496,19 @@ async def draw_master(ctx, args, from_discard=False):
         drawn_scraps = []
         fail_scraps = []
         for arg in args:
-            if arg in source_pile:
-                drawn_scraps.append(arg)
-                source_pile.remove(arg)
-            else:
+            match_scrap = next((s for s in source_pile if arg == s),
+                               next((s for s in source_pile if arg.lower() == s.lower()), None))
+            if match_scrap is None:
                 fail_scraps.append(arg)
+                continue
+            drawn_scraps.append(match_scrap)
+            source_pile.remove(match_scrap)
 
         if not drawn_scraps:
             descript = "Couldn't find any of those scraps in the %s!" % keyword
             had_err = True
         else:
-            descript = " %d scrap(s) from the %s" % (len(args), keyword)
+            descript = " %d specific scrap(s) from the %s" % (len(args), keyword)
 
         if fail_scraps and not had_err:
             descript += "\nNote: Couldn't find `%s`" % "`, `".join(fail_scraps)
@@ -602,17 +604,21 @@ async def list_send(ctx, description, entries, end_description="", title="", foo
 
 @commands.command()
 @check_user_in_session()
-async def draw(ctx, args=None):
-    if args is None:
+async def draw(ctx, scraps: commands.Greedy[clean_scrap]):
+    if not scraps:
         args = ["1"]
+    else:
+        args = scraps
     return await draw_master(ctx, args, from_discard=False)
 
 
 @commands.command(name="drawfromdiscard", aliases=["drawdiscard", "discarddraw"])
 @check_user_in_session()
-async def draw_from_discard(ctx, args=None):
-    if args is None:
+async def draw_from_discard(ctx, scraps: commands.Greedy[clean_scrap]):
+    if not scraps:
         args = ["1"]
+    else:
+        args = scraps
     return await draw_master(ctx, args, from_discard=True)
 
 
@@ -801,16 +807,18 @@ async def discard_destroy_return(ctx, scraps, func_type):
         sessions[session_id]['players'][user_id] = []
     else:
         for scrap in scraps:
-            if scrap in user_hand:
-                user_hand.remove(scrap)
-                if func_type in ['play', 'discard']:
-                    sessions[session_id]['discard'].append(scrap)
-                elif func_type == 'return':
-                    sessions[session_id]['bowl'].append(scrap)
-                success_discard.append(scrap)
-            else:
+            # tries case-sensitive match first, then case-insensitive match
+            match_scrap = next((s for s in user_hand if scrap == s),
+                               next((s for s in user_hand if scrap.lower() == s.lower()), None))
+            if match_scrap is None:
                 fail_discard.append(scrap)
                 continue
+            user_hand.remove(match_scrap)
+            if func_type in ['play', 'discard']:
+                sessions[session_id]['discard'].append(match_scrap)
+            elif func_type == 'return':
+                sessions[session_id]['bowl'].append(match_scrap)
+            success_discard.append(match_scrap)
 
     #TODO: discard/destroy/return random cards from your hand
 
@@ -1070,12 +1078,16 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
     word_scrap = True
 
     for scrap in scraps:
-        if scrap in source_hand:
-            success_scraps.append(scrap)
-            source_hand.remove(scrap)
-            dest_hand.append(scrap)
-        else:
+        match_scrap = next((s for s in source_hand if scrap == s),
+                           next((s for s in source_hand if scrap.lower() == s.lower()), None))
+
+        if match_scrap is None:
             fail_scraps.append(scrap)
+            continue
+
+        success_scraps.append(match_scrap)
+        source_hand.remove(match_scrap)
+        dest_hand.append(match_scrap)
 
     if not success_scraps:
         try:
