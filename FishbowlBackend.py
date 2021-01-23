@@ -10,18 +10,19 @@ ERROR_EMBED_COLOR = 0xFF6347
 BUG_EMBED_COLOR = 0x5058a8
 MESSAGE_MAX_LEN = 2000
 DEFAULT_PREFIX = "!"
-PREFIX_JSON = "prefixes.json"
+PREFIX_JSON = "guild_prefixes.json"
 
 
 def get_prefix(bot, message):
     if message.channel.type is not discord.ChannelType.private:
         with open(PREFIX_JSON, 'r') as f:
             prefixes = json.load(f)
-        if str(message.guild.id) in prefixes:
-            return prefixes[str(message.guild.id)]
-        else:
-            prefixes[str(message.guild.id)] = DEFAULT_PREFIX
-    return DEFAULT_PREFIX
+            if str(message.guild.id) not in prefixes:
+                prefixes[str(message.guild.id)] = DEFAULT_PREFIX
+            pf = prefixes[str(message.guild.id)]
+    else:
+        pf = DEFAULT_PREFIX
+    return pf
 
 
 client = discord.Client()
@@ -46,7 +47,8 @@ async def on_guild_remove(guild):
     with open(PREFIX_JSON, 'r') as f:
         prefixes = json.load(f)
 
-    prefixes.pop(str(guild.id))
+    if str(guild.id) in prefixes:
+        prefixes.pop(str(guild.id))
 
     with open(PREFIX_JSON, 'w') as f:
         json.dump(prefixes, f, indent=4)

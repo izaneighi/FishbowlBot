@@ -1474,5 +1474,11 @@ def setup():
     clean_inactive_sessions.start()
 
 
+def get_user_alt_prefix(user_id):
+    if user_id in users:
+        return sessions[users[user_id]]["home_channel"]
+    return None
+
+
 setup()
 FishbowlBackend.bot.run(token)
