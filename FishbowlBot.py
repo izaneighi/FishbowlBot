@@ -786,8 +786,6 @@ def cut_off_list(char_limit, entries, delineator="`, `", end_part=" and more!"):
 async def discard_destroy_return(ctx, scraps, func_type):
     keyword = func_type
     user_id = ctx.author.id
-    if len(scraps) == 0:
-        return await FishbowlBackend.send_error(ctx, "Need to give me the scrap you're %sing!" % keyword)
 
     session_id = users[user_id]
     session_update_time(session_id)
@@ -797,15 +795,19 @@ async def discard_destroy_return(ctx, scraps, func_type):
     if len(user_hand) == 0:
         return await FishbowlBackend.send_error(ctx, "%s doesn't have any scraps in their hand!" % ctx.author.mention)
 
-    # you SURE this is a command to toss your hand?
-    if (scraps[0] == 'hand') and (len(scraps) == 1) and ('hand' not in user_hand):
+    if 'hand' in func_type:
         success_discard = user_hand
-        if func_type in ['play', 'discard']:
+        if func_type == 'discardhand':
             sessions[session_id]['discard'] += user_hand
-        elif func_type == 'return':
+
+        elif func_type == 'returnhand':
             sessions[session_id]['bowl'] += user_hand
         sessions[session_id]['players'][user_id] = []
+        keyword = func_type[:-4]
     else:
+        if len(scraps) == 0:
+            return await FishbowlBackend.send_error(ctx, "Need to give me the scrap you're %sing!" % keyword)
+
         for scrap in scraps:
             # tries case-sensitive match first, then case-insensitive match
             match_scrap = next((s for s in user_hand if scrap == s),
@@ -822,7 +824,7 @@ async def discard_destroy_return(ctx, scraps, func_type):
 
     #TODO: discard/destroy/return random cards from your hand
 
-    if func_type == 'destroy':
+    if 'destroy' in func_type:
         sessions[session_id]['total_scraps'] -= len(success_discard)
 
     big_footer = "Hand: %d, Bowl: %d, Discard: %d (Session #%s)" % (len(sessions[session_id]['players'][user_id]),
@@ -871,9 +873,30 @@ async def return_scrap(ctx, scraps: commands.Greedy[clean_scrap]):
     return await discard_destroy_return(ctx, scraps, func_type=ctx.invoked_with)
 
 
+@commands.command(aliases=["playall", "discardhand", "discardall"])
+@check_user_in_session()
+async def playhand(ctx, *args):
+    return await discard_destroy_return(ctx, [], func_type=ctx.command.name)
+
+
+@commands.command(aliases=["destroyall"])
+@check_user_in_session()
+async def destroyhand(ctx, *args):
+    return await discard_destroy_return(ctx, [], func_type=ctx.command.name)
+
+
+@commands.command(aliases=["returnall"])
+@check_user_in_session()
+async def returnhand(ctx, *args):
+    return await discard_destroy_return(ctx, [], func_type=ctx.command.name)
+
+
 @discard.error
 @destroy.error
 @return_scrap.error
+@playhand.error
+@destroyhand.error
+@returnhand.error
 async def destroy_error(ctx, error):
     return await general_errors(ctx, error)
 
@@ -930,7 +953,7 @@ async def show_hand(ctx, dest: str):
     session_id = users[user_id]
     session_update_time(session_id)
 
-    if dest.lower() in ['all', 'public']:
+    if dest.lower() in ['all', 'public', 'hand']:
         if ctx.message.channel.type is discord.ChannelType.private:
             return await FishbowlBackend.send_error(ctx, "Can't use `show %s` in DMs!" % dest)
         target_ctx = ctx
@@ -1125,18 +1148,14 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
             confirm_ctx = ctx
             confirm_msg = "%s is trying to %s %d scrap(s) %s %s" % (ctx.author.mention, keyword2[0], len(success_scraps),
                                                                     keyword2[1], target_user.mention)
+
             if word_scrap:
                 # public message???
-                await list_send(dest_user,
-                                description="%s %s %d scrap(s) %s %s" % (source_user.mention,  # User1
-                                                                         keyword1[0],  # passed/took
-                                                                         len(success_scraps),
-                                                                         keyword1[1],  # to/from
-                                                                         dest_user.mention),
-                                end_description=embed_footer,
-                                entries=success_scraps,
-                                footer=footer_msg)
-                descript = ""
+                descript = "%s %s %d scrap(s) %s %s:" % (source_user.mention,  # User1
+                                                           keyword1[0],  # passed/took
+                                                           len(success_scraps),
+                                                           keyword1[1],  # to/from
+                                                           dest_user.mention)  # User2)
             else:
                 descript = "%s %s %d scrap(s) %s %s!" % (source_user.mention,  # User1
                                                            keyword1[0],  # passed/took
@@ -1146,6 +1165,7 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
         if word_scrap:
             cut_list = cut_off_list(EMBED_DESCRIPTION_LIMIT, entries=success_scraps, end_part=", etc.")
             confirm_msg += ":\n`%s`\n" % cut_list
+            descript += ":\n`%s`\n" % cut_list
         else:
             confirm_msg += "! "
 
@@ -1190,7 +1210,8 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
     sessions[session_id]['players'][source_user.id] = source_hand
     sessions[session_id]['players'][dest_user.id] = dest_hand
 
-    if ctx.channel.id != sessions[session_id]['home_channel'].id:
+    # Pastes a notification message in the home channel if needed
+    if ctx.channel.id != sessions[session_id]['home_channel'].id and (sessions[session_id]['home_channel'].id != dest_user.dm_channel.id):
         await FishbowlBackend.send_embed(sessions[session_id]['home_channel'],
                                          description="%s %s %d scrap(s) %s %s!" % (source_user.mention,  # User1
                                                                           keyword1[0],  # passed/took
@@ -1199,7 +1220,8 @@ async def pass_take(ctx, dest, scraps, pass_flag=True):
                                                                           dest_user.mention),  # User2,
                                          footer=footer_msg)
 
-    if descript:
+    # notify sender of status
+    if descript and (ctx.channel.id != source_user.dm_channel.id) or not success_scraps:
         await FishbowlBackend.send_embed(ctx, description=descript+embed_footer, footer=footer_msg)
 
     return
@@ -1416,21 +1438,26 @@ async def ban_error(ctx, error):
         return await general_errors(ctx, error)
 
 
+@commands.command(name="commands", aliases=["command"])
+async def list_commands(ctx, *args):
+    grouped_df = help_df.sort_values(['Command'], ascending=True).groupby("Category")
+    for groupname, groupdf in grouped_df:
+        bot_command_dict = {cmd: cmd_help for cmd, cmd_help in zip(groupdf["CommandExample"], groupdf["Help"])}
+        await FishbowlBackend.send_embed(ctx, "",
+                                         fields=bot_command_dict,
+                                         title="%s Commands:" % groupname)
+    return
+
+
 @commands.command(name="help")
 async def help_bot(ctx, keyword: clean_arg = ""):
     if not keyword:
         return await FishbowlBackend.send_message(ctx, "I'm **FishbowlBot**, a Discord bot for games where you put a bunch of scraps in a bowl, hat, or what have you, then take them out!\n\n" +
                                                   "Start a Fishbowl session with `start`, then have other players join in! Everyone can add scraps with `add` and draw from the bowl using `draw`. You can also `edit` scraps, `pass` them to other players, and more!\n\n" +
-                                                  "You can also DM me commands! Good if you want to add words to the bowl without revealing them.\n\n" +
+                                                  "You can also DM me commands, using the default prefix `%s`! Good if you want to add words to the bowl without revealing them.\n\n" % FishbowlBackend.DEFAULT_PREFIX +
                                                   "For a list of all commands, do `help commands`. You can also ask me for detailed help with a specific command. (i.e. `help start`)")
     if keyword in ["all", "commands", "command", "list"]:
-        grouped_df = help_df.sort_values(['Command'], ascending=True).groupby("Category")
-        for groupname, groupdf in grouped_df:
-            bot_command_dict = {cmd: cmd_help for cmd, cmd_help in zip(groupdf["CommandExample"], groupdf["Help"])}
-            await FishbowlBackend.send_embed(ctx, "",
-                                             fields=bot_command_dict,
-                                             title="%s Commands:" % groupname)
-        return
+        return await list_commands(ctx, [])
     if keyword in help_df.index:
         if help_df.loc[keyword]["Aliases"]:
             footer = "Can also be invoked with: " + help_df.loc[keyword]["Aliases"]
@@ -1443,6 +1470,7 @@ async def help_bot(ctx, keyword: clean_arg = ""):
         return await FishbowlBackend.send_error(ctx, "Don't recognize that help query! Try `help commands` for a list of all commands, or ask me for a specific command! (i.e. `help start`)")
 
 
+@list_commands.error
 @help_bot.error
 async def help_error(ctx, error):
     return await general_errors(ctx, error)
