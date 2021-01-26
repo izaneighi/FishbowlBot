@@ -130,6 +130,12 @@ def clean_scrap(scrap_str):
 
 
 def check_scrap(scrap_str):
+    try:
+        s = int(scrap_str)
+        if s:
+            return "Sorry, I don't accept integers as scraps! (Try writing out the number or wrapping it in single quotes instead!)"
+    except ValueError:
+        pass
     if re.search(r"^<@!\d{18}>", scrap_str):
         return "User mentions are not allowed as scraps!"
     if re.search(r"^<#\d{18}>", scrap_str):
