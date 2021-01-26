@@ -234,13 +234,15 @@ async def changeprefix_error(ctx, error):
 @commands.command()
 async def start(ctx, *args):
     creator_id = ctx.author.id
-    session_id = next((i for i in range(MAX_TOTAL_SESSIONS) if i not in sessions), None)
+    session_id = next((str(i) for i in range(MAX_TOTAL_SESSIONS) if i not in sessions), None)
+
     if session_id is None:
         return await FishbowlBackend.send_error(ctx,
                                                 "Bot is handling too many sessions right now! Please try again later!")
 
     if creator_id in users:
         return await FishbowlBackend.send_error(ctx, "Already in a session! (Session #`%s`)" % users[creator_id])
+
     users[creator_id] = session_id
 
     sessions[session_id] = {'bowl': [],
