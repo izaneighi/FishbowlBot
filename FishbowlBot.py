@@ -11,6 +11,7 @@ import typing
 import traceback
 import asyncio
 import pandas as pd
+import re
 
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
@@ -50,6 +51,10 @@ class PermissionDenied(commands.CheckFailure):
 
 
 class CommandCannotBeDMed(commands.CheckFailure):
+    pass
+
+
+class BadInputCharacter(commands.CheckFailure):
     pass
 
 
@@ -97,6 +102,8 @@ async def general_errors(ctx, error):
         return await FishbowlBackend.send_error(ctx, "Only the creator of the session can use this command!")
     if isinstance(error, commands.ExpectedClosingQuoteError) or isinstance(error, commands.InvalidEndOfQuotedStringError):
         return await FishbowlBackend.send_error(ctx, str(error))
+    if isinstance(error, BadInputCharacter):
+        return await FishbowlBackend.send_error(ctx, "No mentions, channels, URLs, or code blocks!")
     await FishbowlBackend.send_error(ctx, "Something unexpected broke!")
     traceback.print_exc()
 
@@ -120,6 +127,18 @@ def user_to_readable(user):
 
 def clean_scrap(scrap_str):
     return scrap_str.strip().rstrip(",")
+
+
+def check_scrap(scrap_str):
+    if re.search(r"^<@!\d{18}>", scrap_str):
+        return "User mentions are not allowed as scraps!"
+    if re.search(r"^<#\d{18}>", scrap_str):
+        return "Channel mentions are not allowed as scraps!"
+    #is_link = re.search(r"((http|ftp|https)://)?([\w_-]+(?:(?:\.[\w_-]+)+))([\w.,@?^=%&:/~+#-]*[\w@?^=%&/~+#-])?",
+    #                    scrap_str)
+    if re.search("`", scrap_str):
+        return "Code blocks are not allowed as scraps!"
+    return ""
 
 
 async def get_user_session(ctx, user_id):
@@ -420,6 +439,11 @@ async def add_master(ctx, scraps, to_hand=False):
     if any(len(scrap) > SCRAP_MAX_LEN for scrap in scraps):
         return await FishbowlBackend.send_error(ctx, "Scrap(s) too long! %d characters or less, please!" % SCRAP_MAX_LEN)
 
+    bad_scraps = [s for s in scraps if check_scrap(s)]
+    for s in bad_scraps:
+        await FishbowlBackend.send_error(ctx, check_scrap(s))
+        scraps.remove(s)
+
     sessions[session_id]['total_scraps'] += len(scraps)
     if to_hand:
         keywords = ("to their hand", "Hand")
@@ -432,6 +456,8 @@ async def add_master(ctx, scraps, to_hand=False):
     if not scraps:
         descript = "%s added... 0 scrap(s) %s! Huh?\n" % (ctx.author.mention, keywords[0])
         footer = ""
+        if bad_scraps:
+            return
     else:
         descript = "%s added %d scrap(s) %s!\n" % (ctx.author.mention, len(scraps), keywords[0])
         footer = "%s: %d (Session #%s)" % (keywords[1], len(target_place), session_id)
@@ -724,6 +750,12 @@ async def edit(ctx, old_word: clean_scrap, new_word: clean_scrap, *args):
     session_update_time(session_id)
     user_hand = sessions[session_id]['players'][user_id]
 
+    err_msg = check_scrap(new_word)
+    if err_msg:
+        return await FishbowlBackend.send_error(ctx, err_msg)
+    if len(new_word) > SCRAP_MAX_LEN:
+        return await FishbowlBackend.send_error(ctx, "New scrap exceeds max length! (%d char)" % SCRAP_MAX_LEN)
+
     try:
         word_i = user_hand.index(old_word)
         user_hand[word_i] = new_word
@@ -739,7 +771,6 @@ async def edit(ctx, old_word: clean_scrap, new_word: clean_scrap, *args):
                                                 footer="(Session #%s)" % (session_id))
     except ValueError:
         pass
-    #TODO: if new word is too big
     try:
         word_i = sessions[session_id]['bowl'].index(old_word)
         if user_id != sessions[session_id]['creator']:
