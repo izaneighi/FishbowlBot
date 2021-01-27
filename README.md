@@ -15,7 +15,7 @@ Default command prefix is `!`.
 - `ban`: Bans a user from your session
 - `bugreport`: Submit a bug report to the dev
 - `changeprefix`: Change the prefix for the server
-- `command`: Shows all commands.
+- `commands`: Shows all commands.
 - `end`: End your session 
 - `help`: Get help for a command or list all commands
 - `join`: Join Session #`ID`
