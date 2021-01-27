@@ -835,9 +835,8 @@ async def discard_destroy_return(ctx, scraps, func_type):
 
     if 'hand' in func_type:
         success_discard = user_hand
-        if func_type == 'discardhand':
+        if func_type == 'playhand':
             sessions[session_id]['discard'] += user_hand
-
         elif func_type == 'returnhand':
             sessions[session_id]['bowl'] += user_hand
         sessions[session_id]['players'][user_id] = []
